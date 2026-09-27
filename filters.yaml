@@ -1,0 +1,96 @@
+# 日期筛选规则。
+#
+# 抓详情要按订单逐笔请求，所以先用规则挑出关心的日期，只对它们抓详情。
+#   ride-data bulk --har capture.har --filter long-rides
+#   ride-data select --filter real-gps        # 详情已在本地，换规则不必重抓
+#   ride-data bulk --list-filters             # 看所有规则
+#
+# 一条规则里的多个条件是「与」的关系，全部满足才选中。
+# 这里定义的规则会覆盖同名内置规则，所以改默认值不用抄全套。
+#
+# 可用条件：
+#   any_order_duration_min   任一单程时长超过 N 分钟
+#   total_duration_min       当日累计时长超过 N 分钟
+#   max_total_duration_min   当日累计时长不超过 N 分钟
+#   min_orders / max_orders  当日订单数下限 / 上限
+#   min_connections          连续骑行组数量下限
+#   has_full_track           当天是否至少有一笔含真实 GPS 轨迹（true/false）
+#   all_full_track           当天是否每一笔都含真实 GPS 轨迹（true/false）
+#   min_gps_orders           含真实轨迹的订单数下限
+#   weekday                  ISO 星期，1=周一 7=周日，可给列表
+#   date_from / date_to      日期区间，YYYY-MM-DD
+#
+# 注意 has_full_track / all_full_track / min_gps_orders 依赖轨迹信息，
+# 只有 `ride-data select` 阶段（详情已抓到）才判得准；
+# `ride-data bulk` 阶段还不知道轨迹，这类规则在那里选不出日期。
+
+rules:
+  # 默认：值得做成视频的长途骑行
+  long-rides:
+    description: 至少一笔单程骑行超过 30 分钟
+    any_order_duration_min: 30
+
+  # 当天骑了很多趟，累计时间长
+  busy-days:
+    description: 当日累计骑行超过 60 分钟且至少 3 笔
+    total_duration_min: 60
+    min_orders: 3
+
+  # 画面最好看的一批：有真实 GPS 轨迹，不需要导航推算
+  real-gps:
+    description: 当天至少有一笔含真实 GPS 轨迹
+    has_full_track: true
+
+  all-gps:
+    description: 当天每一笔都含真实 GPS 轨迹，全片无推算路径
+    all_full_track: true
+
+  # 连续骑行：适合做成一条连贯的路线视频
+  connected:
+    description: 当天存在连续骑行组
+    min_connections: 1
+
+  weekend-rides:
+    description: 周末且至少一笔超过 20 分钟
+    weekday: [6, 7]
+    any_order_duration_min: 20
+
+  # 不筛选，全都要
+  all:
+    description: 不筛选，选中全部日期
+
+
+# 渲染阶段的配色与过滤。
+video:
+  # 轨迹配色方案。已走过的段是亮色，未走的是暗色，当前正在走的是黄色。
+  # 可选：cyan（默认，与黄互补）/ purple / green / orange / legacy
+  #
+  # 注意 orange 的色相离黄色只有 19°，缩小看时「已走/未走」不易区分。
+  # legacy 是 2026-09 之前的旧配色，已走过的段是白色——压在深蓝底图上会
+  # 显示成中性灰，看着像掉色，保留它只为复现旧产出。
+  palette: cyan
+
+  # 也可以逐项覆盖颜色，RGBA，取值 0–255：
+  # colors:
+  #   done:           [190, 240, 248, 220]   # 已走完的段
+  #   ahead:          [90, 200, 215, 190]    # 还没到的段
+  #   ahead_current:  [90, 200, 215, 145]    # 当前段里前方的路
+  #   casing:         [0, 0, 0, 150]         # 轨迹描边
+  #   transfer:       [90, 200, 215, 150]    # 转场虚线
+  #   accent:         [255, 214, 10]         # 正在走的那一段
+
+  # 以下过滤在路径推算之后才判得准——只有首尾两点的订单，
+  # 要等 route.swift 推算出路径才知道真实里程，用直线距离会低估。
+  # 平均时速低于这个值判为无效骑行：忘记还车、锁车计时、推着走。
+  # 实测语料里可疑记录最高 4.5 km/h，正常骑行最低 8.9 km/h，5.0 落在空隙中间。
+  # 例：120 分钟只走了 780 米 = 0.4 km/h。
+  min_speed_kmh: 5.0
+
+  # 相邻两段间隔超过这个时间、或起终点相距超过这个距离，就拆成两个视频，
+  # 因为那是两次独立出行，不是一次带空档的行程。
+  # 和 ridedata 的连接判断、画面上的「转场」标记用同一套口径。
+  split_gap_minutes: 120
+  split_gap_km: 2.0
+
+  # 一个视频的总里程门槛。几公里的通勤不值得单独成片。
+  min_total_km: 10.0

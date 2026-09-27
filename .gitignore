@@ -1,0 +1,27 @@
+# 登录凭证与抓包文件，绝不入库
+input/
+*.har
+
+# 真实出行数据与渲染产物，绝不入库（只锚定根目录，examples/data 是合成样例）
+/data/
+
+# 配色选型用的样片，含真实轨迹，且体积大
+/preview/
+
+# Swift 工具链产物，首次运行自动编译
+**/bin/
+*.o
+
+# 运行期缓存
+**/cache/
+__pycache__/
+*.py[cod]
+
+.venv/
+venv/
+.DS_Store
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+build/

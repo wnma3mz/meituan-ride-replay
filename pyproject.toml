@@ -1,0 +1,55 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "meituan-ride-replay"
+version = "0.1.0"
+description = "把美团骑行历史导出成结构化数据，并渲染成竖屏回放视频"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+keywords = ["meituan", "cycling", "gps", "video", "mapkit", "visualization"]
+dependencies = [
+    "pillow>=10.0",
+    "pyyaml>=6.0",
+]
+
+[project.scripts]
+ride-data = "ridedata.cli:main"
+ride-video = "ridevideo.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/wnma3mz/meituan-ride-replay"
+Issues = "https://github.com/wnma3mz/meituan-ride-replay/issues"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.6",
+]
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+ridevideo = ["swift/*.swift"]
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]
+ignore = [
+    "E501",    # long lines are mostly Chinese strings and SVG/HTML templates
+    "B008",    # argparse defaults call helpers deliberately
+    "B905",    # zip(xs, xs[1:]) pairs neighbours; strict= would be wrong here
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
