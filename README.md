@@ -68,9 +68,12 @@ RIDE_DATA_DIR=examples/data uv run ride-video 2025-01-01
 
 下面是一段示例成片，展示从骑行记录渲染出的竖屏回放效果。视频文件位于 [`docs/assets/example.mp4`](docs/assets/example.mp4)，也可以直接下载观看。
 
-<video controls width="360" src="docs/assets/example.mp4">
+<video controls muted loop playsinline preload="metadata" width="480">
+  <source src="docs/assets/example.mp4" type="video/mp4">
   你的浏览器不支持视频播放，可[下载示例视频](docs/assets/example.mp4)观看。
 </video>
+
+也可以直接[下载示例视频](docs/assets/example.mp4)观看。
 
 ### 如何导出 HAR
 
