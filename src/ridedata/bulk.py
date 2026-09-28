@@ -17,13 +17,20 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import shutil
 import sys
 import time
 from pathlib import Path
 from typing import Any
 
 from . import api
-from .common import BEIJING, haversine_lonlat, write_csv, write_json
+from .common import (
+    BEIJING,
+    haversine_lonlat,
+    read_json,
+    write_csv,
+    write_json,
+)
 from .fetch import apply_detail, enrich, timestamp_ms
 from .filters import (
     DEFAULT_RULE,
@@ -68,6 +75,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--years", type=int, default=3)
     parser.add_argument("--page-size", type=int, default=100)
     parser.add_argument("--detail-retries", type=int, default=3)
+    parser.add_argument(
+        "--refresh-details", action="store_true",
+        help="忽略已有订单详情缓存，重新请求每笔订单详情",
+    )
     parser.add_argument("--sleep-seconds", type=float, default=0.25)
     parser.add_argument("--from-date", help="覆盖起始日期，YYYY-MM-DD")
     parser.add_argument("--to-date", help="覆盖结束日期，YYYY-MM-DD")
@@ -148,28 +159,82 @@ def order_day(order: dict[str, Any]) -> str:
 haversine_m = haversine_lonlat
 
 
+def _cached_detail(raw_dir: Path, order_id: str) -> tuple[Path, dict[str, Any]] | None:
+    """Find a successful raw detail response for an order, if one exists."""
+    suffix = f"-{order_id}.json"
+    for path in sorted(raw_dir.glob("*.json")):
+        if not path.name.endswith(suffix):
+            continue
+        document = read_json(path)
+        if isinstance(document, dict) and document.get("code") == 0:
+            return path, document
+    return None
+
+
 def enrich_order_details(
     orders: list[dict[str, Any]],
     headers: list[str],
     raw_dir: Path,
     retries: int,
     sleep_seconds: float,
+    refresh_details: bool = False,
 ) -> list[dict[str, Any]]:
-    """Fetch and merge each order's detail, keeping the raw response on disk."""
+    """Fetch and merge details, reusing successful raw responses by order ID."""
     raw_dir.mkdir(parents=True, exist_ok=True)
     enriched: list[dict[str, Any]] = []
     for index, order in enumerate(orders, 1):
         order_id = str(order["orderId"])
         raw_file = raw_dir / f"{index:04d}-{order_id}.json"
-        response, error = api.fetch_order_detail(headers, order_id, retries=retries)
-        write_json(raw_file, response if response is not None else {"error": error})
+        response: dict[str, Any] | None = None
+        error = ""
+        cached = None if refresh_details else _cached_detail(raw_dir, order_id)
+        if cached is not None:
+            raw_file, response = cached
+            mark = "缓存"
+        else:
+            response, error = api.fetch_order_detail(headers, order_id, retries=retries)
+            write_json(raw_file, response if response is not None else {"error": error})
+            mark = "ok" if response is not None else "失败"
         result = enrich(order)
         apply_detail(result, response, error)
         result["detailRawFile"] = str(raw_file)
         enriched.append(result)
         if sleep_seconds:
             time.sleep(sleep_seconds)
+        # Keep bulk output concise while making cache reuse visible.
+        if response is not None and mark == "缓存":
+            print(f"  详情 {index}/{len(orders)} {order_id} {mark}", file=sys.stderr)
     return enriched
+
+
+# `details/` is the long-lived order-detail cache.  Keep it in place when
+# rotating the selected day manifests so changing filters does not refetch it.
+SELECTION_ARTIFACTS = (
+    "days", "summary.json", "qualifying-days.csv", "connected-groups.csv",
+)
+
+
+def _archive_name(root: Path) -> str:
+    summary = read_json(root / "summary.json", default={}) or {}
+    name = str(summary.get("filter") or "previous")
+    candidate = root / "archive" / name
+    index = 2
+    while candidate.exists():
+        candidate = root / "archive" / f"{name}-{index}"
+        index += 1
+    return candidate.name
+
+
+def archive_previous_selection(root: Path) -> Path | None:
+    """Move the previous filter output aside before writing a new selection."""
+    sources = [root / name for name in SELECTION_ARTIFACTS if (root / name).exists()]
+    if not sources:
+        return None
+    archive = root / "archive" / _archive_name(root)
+    archive.mkdir(parents=True, exist_ok=True)
+    for source in sources:
+        shutil.move(str(source), str(archive / source.name))
+    return archive
 
 
 def connections(orders: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[list[str]]]:
@@ -277,6 +342,9 @@ def main(argv: list[str] | None = None) -> None:
         })
     print(f"筛选规则 {rule.name}：{rule.describe()} → {len(qualifying_days)}/{len(by_day)} 天",
           file=sys.stderr)
+    archived_selection = archive_previous_selection(root)
+    if archived_selection:
+        print(f"上一次筛选结果已归档到 {archived_selection}", file=sys.stderr)
 
     if qualifying_days:
         connected_rows: list[dict[str, Any]] = []
@@ -287,6 +355,7 @@ def main(argv: list[str] | None = None) -> None:
             detailed = enrich_order_details(
                 by_day[day], headers, root / "details" / day,
                 args.detail_retries, args.sleep_seconds,
+                refresh_details=args.refresh_details,
             )
             links, groups = connections(detailed)
             item["detailsFetched"] = len(detailed)
@@ -341,6 +410,7 @@ def main(argv: list[str] | None = None) -> None:
         "filterConditions": rule.conditions,
         "qualifyingDayCount": len(qualifying_days),
         "qualifyingDays": qualifying_days,
+        "archivedPreviousSelection": str(archived_selection) if archived_selection else None,
         "note": (
             f"筛选规则 {rule.name}：{rule.describe()}。"
             f"连接判断：前单结束到后单起点直线距离 <= {CONNECT_METERS} 米，"
@@ -353,7 +423,9 @@ def main(argv: list[str] | None = None) -> None:
         "fromDate": start.isoformat(), "toDate": end.isoformat(),
         "orders": len(enriched_orders), "days": len(by_day),
         "filter": rule.name,
-        "qualifyingDays": len(qualifying_days), "output": str(root),
+        "qualifyingDays": len(qualifying_days),
+        "archivedPreviousSelection": str(archived_selection) if archived_selection else None,
+        "output": str(root),
     }, ensure_ascii=False))
 
 

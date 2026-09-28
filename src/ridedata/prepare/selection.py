@@ -104,7 +104,11 @@ def main(argv: list[str] | None = None) -> None:
         move_to_archive(root, archive)
 
     source_days = archive / "days"
+    # `bulk` keeps details/ as a shared long-lived cache while rotating only
+    # the selected manifests.  Older archives may still contain their own copy.
     source_details = archive / "details"
+    if not source_details.exists():
+        source_details = root / "details"
     if not source_days.exists():
         raise SystemExit(
             f"找不到 {source_days}；先跑一次 ride-data bulk 建立详情缓存")
@@ -156,8 +160,9 @@ def main(argv: list[str] | None = None) -> None:
         })
         write_json(target_days / source_day.name, document)
         source_detail_day = source_details / date
-        if source_detail_day.exists():
-            shutil.copytree(source_detail_day, target_details / date,
+        target_detail_day = target_details / date
+        if source_detail_day.exists() and source_detail_day != target_detail_day:
+            shutil.copytree(source_detail_day, target_detail_day,
                             dirs_exist_ok=True)
 
     old_summary = read_json(archive / "summary.json", default={}) or {}

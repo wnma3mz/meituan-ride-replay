@@ -81,6 +81,33 @@ class TestJsonCache:
         cache.flush()
         assert (tmp_path / "deep" / "c.json").exists()
 
+    def test_flush_merges_concurrent_cache_updates(self, tmp_path):
+        target = tmp_path / "c.json"
+        first = JsonCache(target)
+        second = JsonCache(target)
+        first.set("first", 1)
+        second.set("second", 2)
+        first.flush()
+        second.flush()
+        assert json.loads(target.read_text(encoding="utf-8")) == {
+            "first": 1, "second": 2,
+        }
+
+    def test_flush_does_not_overwrite_newer_worker_data(self, tmp_path):
+        target = tmp_path / "c.json"
+        target.write_text(json.dumps({"old": 0}), encoding="utf-8")
+        first = JsonCache(target)
+        second = JsonCache(target)
+        first.get("old")
+        second.get("old")
+        first.set("first", 1)
+        second.set("second", 2)
+        first.flush()
+        second.flush()
+        assert json.loads(target.read_text(encoding="utf-8")) == {
+            "old": 0, "first": 1, "second": 2,
+        }
+
 
 class TestCoordParsing:
     """snapbin's stdout can carry framework log lines among the coordinates."""
@@ -171,3 +198,29 @@ class TestTimeline:
         long = suggest_ride_seconds(self._day([60] * 12))
         assert short < long
         assert 8.0 <= short and long <= 46.0
+
+
+class TestVideoValidation:
+    def test_small_file_is_not_usable(self, tmp_path):
+        from ridevideo.rides import batch
+
+        target = tmp_path / "broken.mp4"
+        target.write_bytes(b"x" * (batch.MIN_VIDEO_BYTES - 1))
+        assert not batch._usable_video(target, ffprobe="/does/not/exist")
+
+    def test_ffprobe_rejects_invalid_file(self, tmp_path, monkeypatch):
+        from ridevideo.rides import batch
+
+        target = tmp_path / "broken.mp4"
+        target.write_bytes(b"x" * batch.MIN_VIDEO_BYTES)
+        monkeypatch.setattr(batch.subprocess, "run", lambda *args, **kwargs: type(
+            "Result", (), {"returncode": 1, "stdout": ""}
+        )())
+        assert not batch._usable_video(target, ffprobe="ffprobe")
+
+    def test_size_fallback_accepts_large_file_without_ffprobe(self, tmp_path):
+        from ridevideo.rides import batch
+
+        target = tmp_path / "large.mp4"
+        target.write_bytes(b"x" * batch.MIN_VIDEO_BYTES)
+        assert batch._usable_video(target, ffprobe="")

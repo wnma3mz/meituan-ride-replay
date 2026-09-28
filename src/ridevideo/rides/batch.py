@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -25,6 +26,37 @@ MIN_VIDEO_BYTES = 100_000
 # The worker uses this exit code when a day has no qualifying journey, which is
 # a filtering outcome rather than an error.
 EXIT_NOTHING_TO_RENDER = 3
+
+
+def _matching_videos(out_dir: Path, key: str) -> list[Path]:
+    return sorted(out_dir.glob(f"{key}.mp4")) + sorted(out_dir.glob(f"{key}-*.mp4"))
+
+
+def _usable_video(path: Path, ffprobe: str | None = None) -> bool:
+    """Accept only substantial, decodable videos when deciding what to skip."""
+    try:
+        if path.stat().st_size < MIN_VIDEO_BYTES:
+            return False
+    except OSError:
+        return False
+    if ffprobe is None:
+        ffprobe = shutil.which("ffprobe")
+    if not ffprobe:
+        return True
+    try:
+        checked = subprocess.run(
+            [ffprobe, "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", str(path)],
+            capture_output=True, text=True, timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    if checked.returncode != 0:
+        return False
+    try:
+        return float(checked.stdout.strip()) > 0
+    except ValueError:
+        return False
 
 
 @dataclass
@@ -64,17 +96,32 @@ def run(
     python = sys.executable
 
     # A day may yield several journeys, so its outputs are `<date>.mp4` or
-    # `<date>-1.mp4`, `<date>-2.mp4`.  Any existing file for the date counts as
-    # done.
+    # `<date>-1.mp4`, `<date>-2.mp4`.  Only valid videos count as done.
+    ffprobe = shutil.which("ffprobe")
+
     def existing(key: str) -> list[Path]:
-        return sorted(out_dir.glob(f"{key}.mp4")) + sorted(out_dir.glob(f"{key}-*.mp4"))
+        matches = _matching_videos(out_dir, key)
+        if not matches or any(not _usable_video(path, ffprobe) for path in matches):
+            return []
+        return matches
+
+    def remove_outputs(key: str) -> None:
+        for path in _matching_videos(out_dir, key):
+            try:
+                path.unlink()
+            except OSError:
+                pass
 
     todo = []
     skipped = []
     for job in jobs:
-        if existing(job.key) and not overwrite:
+        valid = existing(job.key)
+        if valid and not overwrite:
             skipped.append(job.key)
         else:
+            # Remove corrupt leftovers, and remove all old variants on overwrite
+            # so a previous multi-journey result cannot contaminate this run.
+            remove_outputs(job.key)
             todo.append(job)
 
     results: list[dict] = []
@@ -106,7 +153,7 @@ def run(
             running.remove(item)
             done_count += 1
             out, err = proc.communicate()
-            produced = [p for p in existing(job.key) if p.stat().st_size >= MIN_VIDEO_BYTES]
+            produced = existing(job.key)
             if proc.returncode == 0 and produced:
                 try:
                     payload = json.loads(out)

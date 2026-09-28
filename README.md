@@ -9,8 +9,7 @@ HAR  ──►  ridedata  ──►  data/  ──►  ridevideo  ──►  mp4
          抓取 + 整理               MapKit + Pillow + ffmpeg
 ```
 
-两个包各自独立：`ridevideo` 只读数据目录，不 import `ridedata` 任何代码
-（有测试守着这条边界）。设计细节见 [docs/architecture.md](docs/architecture.md)。
+两个包各自独立：`ridevideo` 只读数据目录，不 import `ridedata` 任何代码（有测试守着这条边界）。设计细节见 [docs/architecture.md](docs/architecture.md)。
 
 ## 环境要求
 
@@ -43,8 +42,7 @@ python3 -m venv .venv && ./.venv/bin/pip install -e .
 
 ## 快速开始
 
-唯一需要准备的是一份 HAR：在浏览器开发者工具的网络面板打开记录，
-访问美团骑行历史页面，随便点开一两个订单，然后导出 HAR。
+唯一需要准备的是一份 HAR：在浏览器开发者工具的网络面板打开记录，访问美团骑行历史页面，随便点开一两个订单，然后导出 HAR。
 
 ```bash
 # 抓一天并出视频
@@ -56,6 +54,7 @@ uv run ride-video 2025-04-04
 
 ```bash
 uv run ride-data bulk --har capture.har          # 抓列表，按规则挑日期抓详情
+uv run ride-data bulk --har capture.har --refresh-details  # 强制刷新详情缓存
 uv run ride-video --all-days --workers 5         # 每个入选日期一个视频
 ```
 
@@ -65,10 +64,21 @@ uv run ride-video --all-days --workers 5         # 每个入选日期一个视�
 RIDE_DATA_DIR=examples/data uv run ride-video 2025-01-01
 ```
 
+## 示例视频
+
+下面是一段示例成片，展示从骑行记录渲染出的竖屏回放效果。视频文件位于 [`docs/assets/example.mp4`](docs/assets/example.mp4)，也可以直接下载观看。
+
+<video controls width="360" src="docs/assets/example.mp4">
+  你的浏览器不支持视频播放，可[下载示例视频](docs/assets/example.mp4)观看。
+</video>
+
+### 如何导出 HAR
+
+可以使用 [Stream](https://apps.apple.com/cn/app/stream/id1312141691) 导出 HAR 文件：在 Stream 中抓取美团骑行历史页面的网络请求，访问历史记录并点开需要导出的订单，然后将抓包结果导出为 `.har` 文件，再按上面的命令传给 `--har` 参数。HAR 文件包含登录凭证，使用后请妥善保管，不要提交到仓库或分享给他人。
+
 ## 筛选规则
 
-抓详情要按订单逐笔请求，所以先挑日期。规则写在 `filters.yaml` 里，
-不是写死在代码里：
+抓详情要按订单逐笔请求，所以先挑日期。规则写在 `filters.yaml` 里，不是写死在代码里：
 
 ```yaml
 rules:
@@ -83,13 +93,9 @@ uv run ride-data bulk --har capture.har --filter real-gps
 uv run ride-data select --filter all-gps          # 详情已在本地，换规则不重抓
 ```
 
-内置规则包括 `long-rides`（默认，任一单程超 30 分钟）、`daily-total`、
-`real-gps`、`all-gps`、`connected`、`all`。可用条件有时长、订单数、
-轨迹来源、星期、日期区间等，完整列表见 `filters.yaml` 的注释或
-`ride-data bulk --list-filters`。
+内置规则包括 `long-rides`（默认，任一单程超 30 分钟）、`daily-total`、`real-gps`、`all-gps`、`connected`、`all`。可用条件有时长、订单数、轨迹来源、星期、日期区间等，完整列表见 `filters.yaml` 的注释或 `ride-data bulk --list-filters`。
 
-`select` 换规则时，上一次的结果会归档到 `data/three-years/archive/<规则名>/`，
-两种口径可以对照。
+`select` 换规则时，上一次的结果会归档到 `data/three-years/archive/<规则名>/`，两种口径可以对照。
 
 ## 凭证与隐私
 
@@ -100,8 +106,7 @@ uv run ride-data select --filter all-gps          # 详情已在本地，换规�
 - 凭证只从 HAR 里读，绝不会写进任何输出文件
 - HAR 的短期签名会过期，过期后接口返回 403，重新导出一份即可
 
-接口定义（URL、请求体、分页、重试）全在 `src/ridedata/api.py` 里，
-HAR 只贡献 `Cookie` 和 `userid` / `yoda*` 这几个头。
+接口定义（URL、请求体、分页、重试）全在 `src/ridedata/api.py` 里，HAR 只贡献 `Cookie` 和 `userid` / `yoda*` 这几个头。
 
 ## ride-data
 
@@ -115,16 +120,14 @@ HAR 只贡献 `Cookie` 和 `userid` / `yoda*` 这几个头。
 
 ## ride-video
 
-**一天就是一个视频。** 当天连得上的骑行段在片中自然接起来，连不上的
-（相隔超过 2 公里）标成「转场」，一天的记录不会被丢掉。
+**一天就是一个视频。** 当天连得上的骑行段在片中自然接起来，连不上的（相隔超过 2 公里）标成「转场」，一天的记录不会被丢掉。
 
 ```bash
 uv run ride-video 2026-05-04                # 单天
 uv run ride-video --all-days --workers 5    # 全部入选日期
 ```
 
-产出到 `data/video-out/`。1080×1920 / 30fps / H.264，时长按内容自适应
-（约 14–55 秒）。细节见 [docs/video.md](docs/video.md)。
+产出到 `data/video-out/`。1080×1920 / 30fps / H.264，时长按内容自适应（约 14–55 秒）。细节见 [docs/video.md](docs/video.md)。
 
 ## 轨迹真实性
 
@@ -133,12 +136,9 @@ uv run ride-video --all-days --workers 5    # 全部入选日期
 - **`gps`** —— 返回了 2 个以上轨迹点，画的是真实记录的轨迹
 - **`inferred`** —— 只有首尾两点，路径用 MapKit 导航推算补全
 
-MapKit 没有骑行模式，所以推算优先用**步行**（走的是自行车实际会走的路网，
-也不受单行道限制），只有长途城际段找不到步行路线时才回落到
-**驾车 + 避开高速 + 避开收费站**——默认驾车会把自行车导上高速和收费站。
+MapKit 没有骑行模式，所以推算优先用**步行**（走的是自行车实际会走的路网，也不受单行道限制），只有长途城际段找不到步行路线时才回落到**驾车 + 避开高速 + 避开收费站**——默认驾车会把自行车导上高速和收费站。
 
-含推算路径的视频会在画面底部标注「部分路径为地图导航推算，非 GPS 原始轨迹」。
-推算路径不是真实轨迹。
+含推算路径的视频会在画面底部标注「部分路径为地图导航推算，非 GPS 原始轨迹」。推算路径不是真实轨迹。
 
 ## 开发
 

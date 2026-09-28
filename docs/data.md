@@ -42,6 +42,9 @@ uv run ride-data bulk --har capture.har
 若 `data/three-years/all-orders.json` 已覆盖同一日期范围，默认复用缓存，
 需要重新请求时加 `--refresh-history`。
 
+已抓取的订单详情也会按 `orderId` 从 `data/three-years/details/` 复用；只有
+缺少成功响应的订单才会重新请求。需要强制刷新详情时加 `--refresh-details`。
+
 常用参数：
 
 | 参数 | 说明 |
@@ -51,6 +54,7 @@ uv run ride-data bulk --har capture.har
 | `--years N` | 往前抓几年，默认 3 |
 | `--from-date` / `--to-date` | 直接指定日期区间 |
 | `--refresh-history` | 忽略列表缓存重新抓 |
+| `--refresh-details` | 忽略详情缓存重新抓 |
 | `--sleep-seconds` | 请求间隔，默认 0.25 秒 |
 | `--detail-retries` | 详情失败重试次数，默认 3 |
 
